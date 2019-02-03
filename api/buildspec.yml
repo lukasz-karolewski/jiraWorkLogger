@@ -1,0 +1,14 @@
+version: 0.2
+phases:
+  install:
+    commands:
+      - aws --version
+      - cd api
+      - sudo pip install --upgrade pip awscli
+      - sudo pip install -r requirements.txt
+      - chalice package /tmp/packaged
+      - aws cloudformation package --template-file /tmp/packaged/sam.json --s3-bucket ${APP_S3_BUCKET} --output-template-file transformed.yaml
+artifacts:
+  type: zip
+  files:
+    - api/transformed.yaml

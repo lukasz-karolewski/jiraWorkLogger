@@ -1,0 +1,9 @@
+version: 0.2
+phases:
+  install:
+    commands:
+      - aws --version
+      - cd web
+      - npm ci
+      - npm run build
+      - aws s3 sync --delete ./build s3://${WEB_S3_BUCKET}

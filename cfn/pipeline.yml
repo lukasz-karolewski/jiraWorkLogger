@@ -1,0 +1,369 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Parameters:
+  ApplicationName:
+    Default: jiraWorkLogger
+    Type: String
+    Description: Enter the name of your application
+  CodeBuildImageApi:
+    Default: aws/codebuild/python:3.6.5
+    Type: String
+    Description: Name of codebuild image to use for api.
+  CodeBuildImageWeb:
+    Default: aws/codebuild/nodejs:10.14.1
+    Type: String
+    Description: Name of codebuild image to use for frontend.
+  GitHubToken:
+    NoEcho: 'true'
+    Type: String
+    Description: Secret. It might look something like 9b189a1654643522561f7b3ebd44a1531a4287af
+      OAuthToken with access to Repo. Go to https://github.com/settings/tokens
+  GitHubUser:
+    Type: String
+    Description: GitHub UserName
+    Default: lukasz-karolewski
+  Repo:
+    Type: String
+    Description: GitHub Repo to pull from. Only the Name. not the URL
+    Default: jiraWorkLogger
+  Branch:
+    Type: String
+    Description: Branch to use from Repo. Only the Name. not the URL
+    Default: master
+Resources:
+  StaticHostBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      AccessControl: PublicRead
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: index.html
+      Tags:
+        - Key: owner
+          Value: lukasz.karolewski@move.com
+        - Key: component
+          Value: Automation
+        - Key: environment
+          Value: dev
+        - Key: product
+          Value: rdc_web
+        - Key: classification
+          Value: Public
+        - Key: Name
+          Value: jiraWorkLogger
+  StaticHostBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      PolicyDocument:
+        Id: AllowAnonymousAccessPolicy
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowAnonymousAccess
+            Effect: Allow
+            Principal: "*"
+            Action: s3:GetObject
+            Resource:
+              - Fn::Sub: arn:aws:s3:::${StaticHostBucket}
+              - Fn::Sub: arn:aws:s3:::${StaticHostBucket}/*
+      Bucket:
+        Ref: StaticHostBucket
+  ApplicationBucket:
+    Type: AWS::S3::Bucket
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Action:
+              - sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+                - codebuild.amazonaws.com
+  CodeBuildPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: CodeBuildPolicy
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Action:
+              - logs:CreateLogGroup
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+            Resource: "*"
+            Effect: Allow
+          - Action:
+              - s3:ListBucket
+              - s3:GetObject
+              - s3:GetObjectVersion
+              - s3:PutObject
+              - s3:PutObjectAcl
+            Resource: arn:aws:s3:::*
+            Effect: Allow
+      Roles:
+        - Ref: CodeBuildRole
+  BuildApi:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image:
+          Ref: CodeBuildImageApi
+        Type: LINUX_CONTAINER
+        EnvironmentVariables:
+          - Name: APP_S3_BUCKET
+            Value:
+              Ref: ApplicationBucket
+      Name:
+        Fn::Sub: "${ApplicationName}BuildApi"
+      ServiceRole:
+        Fn::GetAtt:
+          - CodeBuildRole
+          - Arn
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: api/buildspec.yml
+  BuildWeb:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image:
+          Ref: CodeBuildImageWeb
+        Type: LINUX_CONTAINER
+        EnvironmentVariables:
+          - Name: WEB_S3_BUCKET
+            Value:
+              Ref: StaticHostBucket
+      Name:
+        Fn::Sub: "${ApplicationName}BuildWeb"
+      ServiceRole:
+        Fn::GetAtt:
+          - CodeBuildRole
+          - Arn
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: web/buildspec.yml
+  AppPipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name:
+        Fn::Sub: "${ApplicationName}Pipeline"
+      ArtifactStore:
+        Type: S3
+        Location:
+          Ref: ArtifactBucketStore
+      RoleArn:
+        Fn::GetAtt:
+          - CodePipelineRole
+          - Arn
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: Source
+              ActionTypeId:
+                Category: Source
+                Owner: ThirdParty
+                Version: '1'
+                Provider: GitHub
+              Configuration:
+                Owner:
+                  Ref: GitHubUser
+                Repo:
+                  Ref: Repo
+                Branch:
+                  Ref: Branch
+                OAuthToken:
+                  Ref: GitHubToken
+              OutputArtifacts:
+                - Name: SourceRepo
+              RunOrder: 1
+        - Name: Build
+          Actions:
+            - Name: CodeBuildApi
+              InputArtifacts:
+                - Name: SourceRepo
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Version: 1
+                Provider: CodeBuild
+              OutputArtifacts:
+                - Name: CompiledCFNTemplate
+              Configuration:
+                ProjectName:
+                  Ref: BuildApi
+              RunOrder: 1
+            - Name: CodeBuildWeb
+              InputArtifacts:
+                - Name: SourceRepo
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Version: 1
+                Provider: CodeBuild
+              Configuration:
+                ProjectName:
+                  Ref: BuildWeb
+              RunOrder: 2
+        - Name: Beta
+          Actions:
+            - Name: CreateBetaChangeSet
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Version: 1
+                Provider: CloudFormation
+              InputArtifacts:
+                - Name: CompiledCFNTemplate
+              Configuration:
+                ActionMode: CHANGE_SET_REPLACE
+                ChangeSetName:
+                  Fn::Sub: "${ApplicationName}ChangeSet"
+                RoleArn:
+                  Fn::GetAtt:
+                    - CFNDeployRole
+                    - Arn
+                Capabilities: CAPABILITY_IAM
+                StackName:
+                  Fn::Sub: "${ApplicationName}-beta"
+                TemplatePath: CompiledCFNTemplate::api/transformed.yaml
+              RunOrder: 1
+            - Name: ExecuteChangeSet
+              RunOrder: 2
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Version: 1
+                Provider: CloudFormation
+              Configuration:
+                StackName:
+                  Fn::Sub: "${ApplicationName}-beta"
+                ActionMode: CHANGE_SET_EXECUTE
+                ChangeSetName:
+                  Fn::Sub: "${ApplicationName}ChangeSet"
+                OutputFileName: StackOutputs.json
+
+              OutputArtifacts:
+                - Name: AppDeploymentValues
+  ArtifactBucketStore:
+    Type: AWS::S3::Bucket
+    Properties:
+      VersioningConfiguration:
+        Status: Enabled
+  CodePipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Policies:
+        - PolicyName: DefaultPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:GetBucketVersioning
+                  - s3:CreateBucket
+                  - s3:PutObject
+                  - s3:PutBucketVersioning
+                Resource: "*"
+                Effect: Allow
+              - Action:
+                  - codecommit:CancelUploadArchive
+                  - codecommit:GetBranch
+                  - codecommit:GetCommit
+                  - codecommit:GetUploadArchiveStatus
+                  - codecommit:UploadArchive
+                Resource: "*"
+                Effect: Allow
+              - Action:
+                  - cloudwatch:*
+                  - iam:PassRole
+                Resource: "*"
+                Effect: Allow
+              - Action:
+                  - lambda:InvokeFunction
+                  - lambda:ListFunctions
+                Resource: "*"
+                Effect: Allow
+              - Action:
+                  - cloudformation:CreateStack
+                  - cloudformation:DeleteStack
+                  - cloudformation:DescribeStacks
+                  - cloudformation:UpdateStack
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:DeleteChangeSet
+                  - cloudformation:DescribeChangeSet
+                  - cloudformation:ExecuteChangeSet
+                  - cloudformation:SetStackPolicy
+                  - cloudformation:ValidateTemplate
+                  - iam:PassRole
+                Resource: "*"
+                Effect: Allow
+              - Action:
+                  - codebuild:BatchGetBuilds
+                  - codebuild:StartBuild
+                Resource: "*"
+                Effect: Allow
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Action:
+              - sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+                - codepipeline.amazonaws.com
+  CFNDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Policies:
+        - PolicyName: DeployAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Action: "*"
+                Resource: "*"
+                Effect: Allow
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Action:
+              - sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+                - cloudformation.amazonaws.com
+Outputs:
+  WebsiteURL:
+    Value:
+      Fn::GetAtt:
+        - StaticHostBucket
+        - WebsiteURL
+    Description: URL for website hosted on S3
+  S3ApplicationBucket:
+    Value:
+      Ref: ApplicationBucket
+  CodeBuildRoleArn:
+    Value:
+      Fn::GetAtt:
+        - CodeBuildRole
+        - Arn
+  S3PipelineBucket:
+    Value:
+      Ref: ArtifactBucketStore
+  CodePipelineRoleArn:
+    Value:
+      Fn::GetAtt:
+        - CodePipelineRole
+        - Arn
+  CFNDeployRoleArn:
+    Value:
+      Fn::GetAtt:
+        - CFNDeployRole
+        - Arn
