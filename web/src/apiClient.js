@@ -1,4 +1,4 @@
-const API_ROOT = "https://uym0p1wqoc.execute-api.us-west-2.amazonaws.com/api/";
+const API_ROOT = (process.env.NODE_ENV === 'production' ? "https://uym0p1wqoc.execute-api.us-west-2.amazonaws.com/api" : "http://localhost:8000");
 
 export function getConfig() {
     return {
@@ -16,11 +16,17 @@ export function getConfig() {
 }
 
 export function saveConfig(config) {
-
+    console.log('test');
 }
 
-export function checkCredentials(config) {
-
+export function checkCredentials(username, password) {
+    return fetch(`${API_ROOT}/check-credentials`, {
+        method: "POST",
+        headers: new Headers([
+            ['Content-Type', "application/json"]
+        ]),
+        body: JSON.stringify({username, password})
+    });
 }
 
 export function processEmployee(config) {

@@ -14,10 +14,8 @@ logger.setLevel(logging.DEBUG)
 JIRA_URL = "https://jira.move.com"
 JIRA_MAX_ALLOWED_HOURS_PER_ENTRY = 99
 
-url = f"{JIRA_URL}/rest/tempo-timesheets/3/worklogs/"
-user = os.getenv('jira_username')
-password = os.getenv('jira_password')
 
+# https://docs.atlassian.com/software/jira/docs/api/REST/7.7.0/
 
 def _get_headers(user, password):
     authorization_hash = base64.b64encode(bytes(f"{user}:{password}", 'utf-8')).decode("utf-8")
@@ -28,7 +26,11 @@ def _get_headers(user, password):
 
 
 def check_credentials(username, password):
-    return True
+    url = f"{JIRA_URL}/rest/auth/latest/session"
+    r = requests.post(url, headers={"content-type": "application/json"},
+                      data=json.dumps({"username": username, "password": password}))
+
+    return r.status_code
 
 
 def process_employee(jira_ticket, as_of, employee, days_in_period, hours_per_day, default_overhead):
@@ -61,6 +63,7 @@ def _log_work(jira_ticket, as_of, jira_username, hours):
         "author": {"name": jira_username},
     }
 
+    url = f"{JIRA_URL}/rest/tempo-timesheets/3/worklogs/"
     r = requests.post(url, headers=_get_headers(user, password), data=json.dumps(data))
 
     if r.status_code == 200:
