@@ -33,10 +33,6 @@ Resources:
   StaticHostBucket:
     Type: AWS::S3::Bucket
     Properties:
-      AccessControl: PublicRead
-      WebsiteConfiguration:
-        IndexDocument: index.html
-        ErrorDocument: index.html
       Tags:
         - Key: owner
           Value: lukasz.karolewski@move.com
@@ -50,22 +46,63 @@ Resources:
           Value: Public
         - Key: Name
           Value: jiraWorkLogger
+#  Distribution:
+#    Type: AWS::CloudFront::Distribution
+#    Properties:
+#      DistributionConfig:
+#        Enabled: 'true'
+#        HttpVersion: http2
+#        Origins:
+#          - Id: staticHostBucket
+#            DomainName: !Sub "${StaticHostBucket}.s3.amazonaws.com"
+#            S3OriginConfig:
+#              OriginAccessIdentity: !Sub "origin-access-identity/cloudfront/${TheCloudFrontOriginAccessIdentity}"
+#        DefaultCacheBehavior:
+#          TargetOriginId: staticHostBucket
+#          AllowedMethods:
+#            - DELETE
+#            - GET
+#            - HEAD
+#            - OPTIONS
+#            - PATCH
+#            - POST
+#            - PUT
+#          Compress: True
+#          ForwardedValues:
+#            QueryString: 'false'
+#            Cookies:
+#              Forward: none
+#          ViewerProtocolPolicy: redirect-to-https
+#        DefaultRootObject: index.html
+##        Logging:
+##          IncludeCookies: 'false'
+##          Bucket: mylogs.s3.amazonaws.com
+##          Prefix: myprefix
+##        Aliases:
+##          - mysite.example.com
+##          - yoursite.example.com
+#        PriceClass: PriceClass_100
+#        ViewerCertificate:
+#          CloudFrontDefaultCertificate: 'true'
+  TheCloudFrontOriginAccessIdentity:
+    Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
+    Properties:
+      CloudFrontOriginAccessIdentityConfig:
+        Comment: !Sub 'CloudFront OAI'
   StaticHostBucketPolicy:
     Type: AWS::S3::BucketPolicy
     Properties:
+      Bucket: !Ref StaticHostBucket
       PolicyDocument:
-        Id: AllowAnonymousAccessPolicy
-        Version: '2012-10-17'
         Statement:
-          - Sid: AllowAnonymousAccess
+          - Action:
+              - s3:GetObject
             Effect: Allow
-            Principal: "*"
-            Action: s3:GetObject
             Resource:
-              - Fn::Sub: arn:aws:s3:::${StaticHostBucket}
-              - Fn::Sub: arn:aws:s3:::${StaticHostBucket}/*
-      Bucket:
-        Ref: StaticHostBucket
+              - !Sub "arn:aws:s3:::${StaticHostBucket}"
+              - !Sub "arn:aws:s3:::${StaticHostBucket}/*"
+            Principal:
+              CanonicalUser: !GetAtt TheCloudFrontOriginAccessIdentity.S3CanonicalUserId
   ApplicationBucket:
     Type: AWS::S3::Bucket
   CodeBuildRole:
