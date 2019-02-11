@@ -1,4 +1,4 @@
-const API_ROOT = (process.env.NODE_ENV === 'production' ? "https://uym0p1wqoc.execute-api.us-west-2.amazonaws.com/api" : "http://localhost:8000");
+const API_ROOT = (process.env.NODE_ENV === 'production' ? "https://8lt5ajicxf.execute-api.us-west-2.amazonaws.com/api/" : "http://localhost:8000");
 
 export function getConfig() {
     return {
